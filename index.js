@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const http = require("http");
 const socketIo = require("socket.io");
 const crypto = require("crypto");
+const cors = require("cors"); // Añadir el middleware CORS
 
 // Configuración inicial
 dotenv.config();
@@ -14,6 +15,13 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
 });
+
+// Configurar CORS para Express
+app.use(cors({
+  origin: ["http://localhost:5173", "https://tu-dominio-de-frontend.com"], // Reemplaza con tu dominio de producción
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
 app.use(express.json());
 
 // Generar secreto JWT si no existe en .env
@@ -61,7 +69,7 @@ const clienteSchema = new mongoose.Schema({
   correo: { type: String, required: true, unique: true },
   contrasena: { type: String, required: true },
   fecha: { type: Date, default: Date.now },
-  rol: { type: String, default: "user" }, // Añadido campo rol con default 'user'
+  rol: { type: String, default: "user" },
 });
 const Cliente = mongoose.model("Cliente", clienteSchema);
 
@@ -116,10 +124,8 @@ const autenticarAdmin = (req, res, next) => {
 };
 
 // Rutas
-// Ruta raíz de prueba
 app.get("/", (req, res) => res.send("Welcome to my API"));
 
-// Ruta de prueba original
 app.post("/test", async (req, res) => {
   try {
     const testDoc = new mongoose.model("Test", new mongoose.Schema({ name: String }))({ name: "Prueba" });
@@ -140,9 +146,7 @@ app.post("/api/auth/registrar", async (req, res) => {
     const usuarioExistente = await Cliente.findOne({ correo });
     if (usuarioExistente) return res.status(400).json({ mensaje: "Usuario ya existe" });
 
-    // Determinar el rol basado en el dominio del correo
     const rol = correo.endsWith("@srrobot.com") ? "admin" : "user";
-
     const contrasenaEncriptada = await bcrypt.hash(contrasena, 10);
     const id = await obtenerSiguienteSecuencia("clienteId");
     const cliente = new Cliente({
