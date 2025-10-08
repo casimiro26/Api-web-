@@ -55,6 +55,14 @@ mongoose
 const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
 const Counter = mongoose.model("Counter", counterSchema);
 
+const administradorSchema = new mongoose.Schema({
+  id_administrador: { type: Number, unique: true },
+  nombreCompleto: { type: String, required: true },
+  correo: { type: String, required: true, unique: true },
+  rol: { type: String, required: true },
+});
+const Administrador = mongoose.model("Administrador", administradorSchema);
+
 const clienteSchema = new mongoose.Schema({
   id_usuario: { type: Number, unique: true },
   nombreCompleto: { type: String, required: true },
@@ -107,14 +115,6 @@ const autenticarToken = (req, res, next) => {
   });
 };
 
-// Middleware para verificar si es admin
-const autenticarAdmin = (req, res, next) => {
-  if (req.user.rol !== "admin") {
-    return res.status(403).json({ mensaje: "Acceso denegado: solo administradores" });
-  }
-  next();
-};
-
 // Rutas
 // Ruta raíz de prueba
 app.get("/", (req, res) => res.send("Welcome to my API"));
@@ -138,11 +138,7 @@ app.post("/api/auth/registrar", async (req, res) => {
       return res.status(400).json({ mensaje: "Todos los campos son requeridos" });
     }
     const usuarioExistente = await Cliente.findOne({ correo });
-    if (usuarioExistente) return res.status(400).json({ mensaje: "Usuario ya existe" });
-
-    // Determinar el rol basado en el dominio del correo
-    const rol = correo.endsWith("@srrobot.com") ? "admin" : "user";
-
+    if (usuarioExistente) return res.status(400).json({ mensaje: "Usuario existe" });
     const contrasenaEncriptada = await bcrypt.hash(contrasena, 10);
     const id = await obtenerSiguienteSecuencia("clienteId");
     const cliente = new Cliente({
@@ -150,10 +146,10 @@ app.post("/api/auth/registrar", async (req, res) => {
       nombreCompleto,
       correo,
       contrasena: contrasenaEncriptada,
-      rol,
+      rol: "user", // Fija el rol como 'user' para nuevos registros
     });
     await cliente.save();
-    res.status(201).json({ mensaje: "Usuario registrado", rol });
+    res.status(201).json({ mensaje: "Usuario registrado" });
   } catch (err) {
     res.status(500).json({ mensaje: "Error: " + err.message });
   }
@@ -167,17 +163,17 @@ app.post("/api/auth/iniciar-sesion", async (req, res) => {
       return res.status(400).json({ mensaje: "Credenciales inválidas" });
     }
     const token = jwt.sign(
-      { id: cliente._id, rol: cliente.rol },
+      { id: cliente._id, rol: cliente.rol }, // Incluye el rol en el token
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
-    res.json({ token, rol: cliente.rol });
+    res.json({ token, rol: cliente.rol }); // Devuelve el rol al frontend
   } catch (err) {
     res.status(500).json({ mensaje: "Error: " + err.message });
   }
 });
 
-// Rutas de productos
+// Ejemplo de ruta protegida (Productos)
 app.get("/api/productos", autenticarToken, async (req, res) => {
   try {
     const productos = await Producto.find();
@@ -187,7 +183,7 @@ app.get("/api/productos", autenticarToken, async (req, res) => {
   }
 });
 
-app.post("/api/productos", autenticarToken, autenticarAdmin, async (req, res) => {
+app.post("/api/productos", autenticarToken, async (req, res) => {
   try {
     const id = await obtenerSiguienteSecuencia("productoId");
     const producto = new Producto({ id_producto: id, ...req.body });
@@ -206,5 +202,5 @@ io.on("connection", (socket) => {
 });
 
 // Iniciar servidor
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000; // Puerto ahora en .env
 server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
