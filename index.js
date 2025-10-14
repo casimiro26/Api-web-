@@ -6,22 +6,37 @@ const jwt = require("jsonwebtoken");
 const http = require("http");
 const socketIo = require("socket.io");
 const crypto = require("crypto");
-const cors = require("cors"); // Añadir el middleware CORS
+const cors = require("cors");
 
 // Configuración inicial
 dotenv.config();
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
+  cors: {
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
+      "https://tu-dominio-de-frontend.com",
+    ],
+    methods: ["GET", "POST"],
+  },
 });
 
 // Configurar CORS para Express
-app.use(cors({
-  origin: ["http://localhost:5173", "https://tu-dominio-de-frontend.com"], // Reemplaza con tu dominio de producción
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
+      "https://tu-dominio-de-frontend.com",
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
 // Generar secreto JWT si no existe en .env
@@ -57,10 +72,15 @@ mongoose
       console.log("Admin creado");
     }
   })
-  .catch((error) => console.error("Error al conectar a MongoDB:", error.message));
+  .catch((error) =>
+    console.error("Error al conectar a MongoDB:", error.message)
+  );
 
 // Modelos (Esquemas de Mongoose)
-const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
+const counterSchema = new mongoose.Schema({
+  _id: String,
+  seq: { type: Number, default: 0 },
+});
 const Counter = mongoose.model("Counter", counterSchema);
 
 const clienteSchema = new mongoose.Schema({
@@ -118,7 +138,9 @@ const autenticarToken = (req, res, next) => {
 // Middleware para verificar si es admin
 const autenticarAdmin = (req, res, next) => {
   if (req.user.rol !== "admin") {
-    return res.status(403).json({ mensaje: "Acceso denegado: solo administradores" });
+    return res
+      .status(403)
+      .json({ mensaje: "Acceso denegado: solo administradores" });
   }
   next();
 };
@@ -128,7 +150,10 @@ app.get("/", (req, res) => res.send("Welcome to my API"));
 
 app.post("/test", async (req, res) => {
   try {
-    const testDoc = new mongoose.model("Test", new mongoose.Schema({ name: String }))({ name: "Prueba" });
+    const testDoc = new mongoose.model(
+      "Test",
+      new mongoose.Schema({ name: String })
+    )({ name: "Prueba" });
     await testDoc.save();
     res.send("Documento guardado en la base de datos");
   } catch (error) {
@@ -141,10 +166,13 @@ app.post("/api/auth/registrar", async (req, res) => {
   try {
     const { nombreCompleto, correo, contrasena } = req.body;
     if (!nombreCompleto || !correo || !contrasena) {
-      return res.status(400).json({ mensaje: "Todos los campos son requeridos" });
+      return res
+        .status(400)
+        .json({ mensaje: "Todos los campos son requeridos" });
     }
     const usuarioExistente = await Cliente.findOne({ correo });
-    if (usuarioExistente) return res.status(400).json({ mensaje: "Usuario ya existe" });
+    if (usuarioExistente)
+      return res.status(400).json({ mensaje: "Usuario ya existe" });
 
     const rol = correo.endsWith("@srrobot.com") ? "admin" : "user";
     const contrasenaEncriptada = await bcrypt.hash(contrasena, 10);
@@ -191,16 +219,21 @@ app.get("/api/productos", autenticarToken, async (req, res) => {
   }
 });
 
-app.post("/api/productos", autenticarToken, autenticarAdmin, async (req, res) => {
-  try {
-    const id = await obtenerSiguienteSecuencia("productoId");
-    const producto = new Producto({ id_producto: id, ...req.body });
-    await producto.save();
-    res.status(201).json(producto);
-  } catch (err) {
-    res.status(500).json({ mensaje: err.message });
+app.post(
+  "/api/productos",
+  autenticarToken,
+  autenticarAdmin,
+  async (req, res) => {
+    try {
+      const id = await obtenerSiguienteSecuencia("productoId");
+      const producto = new Producto({ id_producto: id, ...req.body });
+      await producto.save();
+      res.status(201).json(producto);
+    } catch (err) {
+      res.status(500).json({ mensaje: err.message });
+    }
   }
-});
+);
 
 // Socket.IO para eventos en tiempo real
 io.on("connection", (socket) => {
