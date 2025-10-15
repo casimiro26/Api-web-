@@ -193,6 +193,16 @@ app.post("/api/setup/crear-superadmin", async (req, res) => {
   }
 });
 
+// Endpoint para obtener todas las categorías (protegido por superadmin)
+app.get("/api/admin/categorias", autenticarToken, autenticarSuperAdmin, async (req, res) => {
+  try {
+    const categorias = await Categoria.find();
+    res.json({ categorias });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al obtener categorías: " + err.message });
+  }
+});
+
 // Endpoint para crear categoría (protegido por superadmin)
 app.post("/api/admin/crear-categoria", autenticarToken, autenticarSuperAdmin, async (req, res) => {
   try {
@@ -213,6 +223,71 @@ app.post("/api/admin/crear-categoria", autenticarToken, autenticarSuperAdmin, as
     res.status(201).json({ mensaje: "Categoría creada con éxito", categoria });
   } catch (err) {
     res.status(500).json({ mensaje: "Error: " + err.message });
+  }
+});
+
+// Endpoint para actualizar categoría (protegido por superadmin)
+app.put("/api/admin/categorias/:id", autenticarToken, autenticarSuperAdmin, async (req, res) => {
+  try {
+    const id_categoria = parseInt(req.params.id);
+    const { nombre, descripcion } = req.body;
+
+    if (!nombre && !descripcion) {
+      return res.status(400).json({ mensaje: "Al menos un campo debe ser proporcionado para actualizar" });
+    }
+
+    const categoriaExistente = await Categoria.findOne({ id_categoria });
+    if (!categoriaExistente) {
+      return res.status(404).json({ mensaje: "Categoría no encontrada" });
+    }
+
+    const actualizaciones = {};
+    if (nombre && nombre.trim() !== categoriaExistente.nombre) {
+      const nombreExistente = await Categoria.findOne({ nombre: nombre.trim() });
+      if (nombreExistente && nombreExistente.id_categoria !== id_categoria) {
+        return res.status(400).json({ mensaje: "El nombre de categoría ya está en uso" });
+      }
+      actualizaciones.nombre = nombre.trim();
+    }
+    if (descripcion !== undefined) {
+      actualizaciones.descripcion = descripcion ? descripcion.trim() : "";
+    }
+
+    if (Object.keys(actualizaciones).length === 0) {
+      return res.status(400).json({ mensaje: "No hay cambios válidos para actualizar" });
+    }
+
+    const categoriaActualizada = await Categoria.findOneAndUpdate(
+      { id_categoria },
+      actualizaciones,
+      { new: true }
+    );
+    res.json({ mensaje: "Categoría actualizada con éxito", categoria: categoriaActualizada });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al actualizar categoría: " + err.message });
+  }
+});
+
+// Endpoint para eliminar categoría (protegido por superadmin)
+app.delete("/api/admin/categorias/:id", autenticarToken, autenticarSuperAdmin, async (req, res) => {
+  try {
+    const id_categoria = parseInt(req.params.id);
+
+    const categoria = await Categoria.findOne({ id_categoria });
+    if (!categoria) {
+      return res.status(404).json({ mensaje: "Categoría no encontrada" });
+    }
+
+    // Opcional: Verificar si hay productos usando esta categoría antes de eliminar
+    const productosUsandoCategoria = await Producto.countDocuments({ categoria: categoria.nombre });
+    if (productosUsandoCategoria > 0) {
+      return res.status(400).json({ mensaje: `No se puede eliminar la categoría "${categoria.nombre}" porque está en uso por ${productosUsandoCategoria} productos` });
+    }
+
+    await Categoria.deleteOne({ id_categoria });
+    res.json({ mensaje: "Categoría eliminada con éxito" });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al eliminar categoría: " + err.message });
   }
 });
 
