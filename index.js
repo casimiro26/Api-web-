@@ -37,32 +37,8 @@ generateJWTSecret();
 // Conexión a MongoDB
 mongoose
   .connect(process.env.MONGODB_URI)
-  .then(async () => {
+  .then(() => {
     console.log("Connected to MongoDB Atlas");
-
-    // Seed para categorías (solo si no existen) - Esto se mantiene ya que no es usuario
-    const categoriasIniciales = [
-      { nombre: "Impresoras", descripcion: "Impresoras de diversas marcas" },
-      { nombre: "Cables", descripcion: "Cables USB, HDMI, etc." },
-      { nombre: "Pantallas", descripcion: "Pantallas y monitores" },
-      { nombre: "Gaming", descripcion: "Productos para gaming" },
-      { nombre: "Monitores", descripcion: "Monitores de alta calidad" },
-      { nombre: "Laptops", descripcion: "Laptops y portátiles" },
-      { nombre: "Cargadores", descripcion: "Cargadores para dispositivos" },
-      { nombre: "Mouse", descripcion: "Ratones para PC" },
-      { nombre: "Teclados", descripcion: "Teclados mecánicos y estándar" },
-      { nombre: "Partes de pc", descripcion: "Componentes para PC" },
-      { nombre: "Cámaras de Seguridad", descripcion: "Cámaras de vigilancia" },
-    ];
-
-    for (const cat of categoriasIniciales) {
-      const exists = await Categoria.findOne({ nombre: cat.nombre.trim() });
-      if (!exists) {
-        const id = await obtenerSiguienteSecuencia("categoriaId");
-        await new Categoria({ id_categoria: id, ...cat }).save();
-        console.log(`Categoría ${cat.nombre} creada`);
-      }
-    }
   })
   .catch((error) => console.error("Error al conectar a MongoDB:", error.message));
 
@@ -194,6 +170,29 @@ app.post("/api/setup/crear-superadmin", async (req, res) => {
     });
     await usuario.save();
     res.status(201).json({ mensaje: "Superadmin creado con éxito", rol: "superadmin" });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error: " + err.message });
+  }
+});
+
+// Endpoint para crear categoría (protegido por superadmin)
+app.post("/api/admin/crear-categoria", autenticarToken, autenticarSuperAdmin, async (req, res) => {
+  try {
+    const { nombre, descripcion } = req.body;
+    if (!nombre) {
+      return res.status(400).json({ mensaje: "El nombre de la categoría es requerido" });
+    }
+    const categoriaExistente = await Categoria.findOne({ nombre: nombre.trim() });
+    if (categoriaExistente) return res.status(400).json({ mensaje: "Categoría ya existe" });
+
+    const id = await obtenerSiguienteSecuencia("categoriaId");
+    const categoria = new Categoria({
+      id_categoria: id,
+      nombre: nombre.trim(),
+      descripcion: descripcion ? descripcion.trim() : "",
+    });
+    await categoria.save();
+    res.status(201).json({ mensaje: "Categoría creada con éxito", categoria });
   } catch (err) {
     res.status(500).json({ mensaje: "Error: " + err.message });
   }
