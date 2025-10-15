@@ -283,6 +283,103 @@ app.post("/api/auth/iniciar-sesion", async (req, res) => {
   }
 });
 
+// Agregar después de tu endpoint POST /api/productos
+
+// Actualizar producto
+app.put("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req, res) => {
+  try {
+    const productId = parseInt(req.params.id);
+    const {
+      name,
+      category,
+      price,
+      originalPrice,
+      discount,
+      image,
+      description,
+      characteristics,
+      productCode,
+      inStock,
+    } = req.body;
+
+    // Limpiar strings
+    const cleanName = name?.trim();
+    const cleanCategory = category?.trim();
+    const cleanImage = image?.trim();
+    const cleanDescription = description?.trim();
+    const cleanCharacteristics = characteristics?.trim();
+    const cleanProductCode = productCode?.trim();
+
+    // Validaciones
+    if (!cleanName || !cleanCategory || !price || !cleanImage || !cleanDescription || !cleanCharacteristics || !cleanProductCode) {
+      return res.status(400).json({ mensaje: "Todos los campos requeridos deben estar presentes" });
+    }
+
+    if (isNaN(price) || price <= 0 || price > 10000) {
+      return res.status(400).json({ mensaje: "El precio debe ser un número entre 0.01 y 10000" });
+    }
+
+    if (discount && (isNaN(discount) || discount < 0 || discount > 100)) {
+      return res.status(400).json({ mensaje: "El descuento debe ser un número entre 0 y 100" });
+    }
+
+    // Validar URL de imagen
+    try {
+      new URL(cleanImage);
+    } catch {
+      return res.status(400).json({ mensaje: "La URL de la imagen es inválida" });
+    }
+
+    // Validar categoría existente
+    const categoriaExiste = await Categoria.findOne({ nombre: cleanCategory });
+    if (!categoriaExiste) {
+      return res.status(400).json({ mensaje: `La categoría "${cleanCategory}" no existe` });
+    }
+
+    // Buscar y actualizar producto
+    const producto = await Producto.findOne({ id_producto: productId });
+    if (!producto) {
+      return res.status(404).json({ mensaje: "Producto no encontrado" });
+    }
+
+    // Actualizar campos
+    producto.nombre = cleanName;
+    producto.categoria = cleanCategory;
+    producto.price = price;
+    producto.originalPrice = originalPrice;
+    producto.discount = discount;
+    producto.image = cleanImage;
+    producto.description = cleanDescription;
+    producto.characteristics = cleanCharacteristics;
+    producto.productCode = cleanProductCode;
+    producto.inStock = inStock !== undefined ? inStock : true;
+
+    await producto.save();
+    
+    res.json({ mensaje: "Producto actualizado con éxito", producto });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al actualizar producto: " + err.message });
+  }
+});
+
+// Eliminar producto
+app.delete("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req, res) => {
+  try {
+    const productId = parseInt(req.params.id);
+    
+    const producto = await Producto.findOne({ id_producto: productId });
+    if (!producto) {
+      return res.status(404).json({ mensaje: "Producto no encontrado" });
+    }
+
+    await Producto.deleteOne({ id_producto: productId });
+    
+    res.json({ mensaje: "Producto eliminado con éxito" });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al eliminar producto: " + err.message });
+  }
+});
+
 // Rutas de productos
 app.get("/api/productos", autenticarToken, async (req, res) => {
   try {
