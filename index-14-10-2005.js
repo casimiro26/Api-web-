@@ -40,7 +40,24 @@ mongoose
   .then(async () => {
     console.log("Connected to MongoDB Atlas");
 
-    // Seed para categorías (solo si no existen) - Esto se mantiene ya que no es usuario
+    // Seed para admin (solo si no existe)
+    const adminEmail = "admin@srrobot.com";
+    const adminExists = await Cliente.findOne({ correo: adminEmail });
+    if (!adminExists) {
+      const hashed = await bcrypt.hash("SrRobot2024!", 10);
+      await new Cliente({
+        _id: "68e3fd8a89e2be410e79815d",
+        id_usuario: 1,
+        nombreCompleto: "Admin SrRobot",
+        correo: adminEmail,
+        contrasena: hashed,
+        rol: "admin",
+        fecha: new Date(),
+      }).save();
+      console.log("Admin creado");
+    }
+
+    // Seed para categorías (solo si no existen)
     const categoriasIniciales = [
       { nombre: "Impresoras", descripcion: "Impresoras de diversas marcas" },
       { nombre: "Cables", descripcion: "Cables USB, HDMI, etc." },
@@ -56,7 +73,7 @@ mongoose
     ];
 
     for (const cat of categoriasIniciales) {
-      const exists = await Categoria.findOne({ nombre: cat.nombre.trim() });
+      const exists = await Categoria.findOne({ nombre: cat.nombre });
       if (!exists) {
         const id = await obtenerSiguienteSecuencia("categoriaId");
         await new Categoria({ id_categoria: id, ...cat }).save();
@@ -69,16 +86,6 @@ mongoose
 // Modelos (Esquemas de Mongoose)
 const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
 const Counter = mongoose.model("Counter", counterSchema);
-
-const usuarioSchema = new mongoose.Schema({
-  id_usuario: { type: Number, unique: true },
-  nombreCompleto: { type: String, required: true },
-  correo: { type: String, required: true, unique: true },
-  contrasena: { type: String, required: true },
-  fecha: { type: Date, default: Date.now },
-  rol: { type: String, enum: ["admin", "superadmin"], default: "admin" },
-});
-const Usuario = mongoose.model("Usuario", usuarioSchema);
 
 const clienteSchema = new mongoose.Schema({
   id_usuario: { type: Number, unique: true },
@@ -137,18 +144,10 @@ const autenticarToken = (req, res, next) => {
   });
 };
 
-// Middleware para verificar admin o superadmin
-const verificarAdminOrSuper = (req, res, next) => {
-  if (!["admin", "superadmin"].includes(req.user.rol)) {
-    return res.status(403).json({ mensaje: "Acceso denegado: solo administradores o superadmin" });
-  }
-  next();
-};
-
-// Middleware para verificar solo superadmin
-const autenticarSuperAdmin = (req, res, next) => {
-  if (req.user.rol !== "superadmin") {
-    return res.status(403).json({ mensaje: "Acceso denegado: solo superadministradores" });
+// Middleware para verificar si es admin
+const autenticarAdmin = (req, res, next) => {
+  if (req.user.rol !== "admin") {
+    return res.status(403).json({ mensaje: "Acceso denegado: solo administradores" });
   }
   next();
 };
@@ -166,52 +165,17 @@ app.post("/test", async (req, res) => {
   }
 });
 
-// Endpoint inicial para crear superadmin (público, solo una vez)
-app.post("/api/setup/crear-superadmin", async (req, res) => {
+// Rutas de autenticación
+app.post("/api/auth/registrar", async (req, res) => {
   try {
     const { nombreCompleto, correo, contrasena } = req.body;
     if (!nombreCompleto || !correo || !contrasena) {
       return res.status(400).json({ mensaje: "Todos los campos son requeridos" });
-    }
-    if (!correo.endsWith("@srrobot.com")) {
-      return res.status(400).json({ mensaje: "Correo debe ser corporativo @srrobot.com" });
-    }
-    const superadminExistente = await Usuario.findOne({ rol: "superadmin" });
-    if (superadminExistente) {
-      return res.status(400).json({ mensaje: "Superadmin ya existe. Usa /api/auth/iniciar-sesion" });
-    }
-    const usuarioExistente = await Usuario.findOne({ correo });
-    if (usuarioExistente) return res.status(400).json({ mensaje: "Correo ya existe" });
-
-    const contrasenaEncriptada = await bcrypt.hash(contrasena, 10);
-    const id = await obtenerSiguienteSecuencia("usuarioId");
-    const usuario = new Usuario({
-      id_usuario: id,
-      nombreCompleto,
-      correo,
-      contrasena: contrasenaEncriptada,
-      rol: "superadmin",
-    });
-    await usuario.save();
-    res.status(201).json({ mensaje: "Superadmin creado con éxito", rol: "superadmin" });
-  } catch (err) {
-    res.status(500).json({ mensaje: "Error: " + err.message });
-  }
-});
-
-// Rutas de autenticación para clientes (solo users normales)
-app.post("/api/auth/registrar-cliente", async (req, res) => {
-  try {
-    const { nombreCompleto, correo, contrasena } = req.body;
-    if (!nombreCompleto || !correo || !contrasena) {
-      return res.status(400).json({ mensaje: "Todos los campos son requeridos" });
-    }
-    if (correo.endsWith("@srrobot.com")) {
-      return res.status(403).json({ mensaje: "Registro solo para clientes. Admins deben ser creados por superadmin." });
     }
     const usuarioExistente = await Cliente.findOne({ correo });
     if (usuarioExistente) return res.status(400).json({ mensaje: "Usuario ya existe" });
 
+    const rol = correo.endsWith("@srrobot.com") ? "admin" : "user";
     const contrasenaEncriptada = await bcrypt.hash(contrasena, 10);
     const id = await obtenerSiguienteSecuencia("clienteId");
     const cliente = new Cliente({
@@ -219,39 +183,10 @@ app.post("/api/auth/registrar-cliente", async (req, res) => {
       nombreCompleto,
       correo,
       contrasena: contrasenaEncriptada,
-      rol: "user",
+      rol,
     });
     await cliente.save();
-    res.status(201).json({ mensaje: "Cliente registrado", rol: "user" });
-  } catch (err) {
-    res.status(500).json({ mensaje: "Error: " + err.message });
-  }
-});
-
-// Endpoint para crear admin (protegido por superadmin)
-app.post("/api/admin/crear-admin", autenticarToken, autenticarSuperAdmin, async (req, res) => {
-  try {
-    const { nombreCompleto, correo, contrasena } = req.body;
-    if (!nombreCompleto || !correo || !contrasena) {
-      return res.status(400).json({ mensaje: "Todos los campos son requeridos" });
-    }
-    if (!correo.endsWith("@srrobot.com")) {
-      return res.status(400).json({ mensaje: "Correo debe ser corporativo @srrobot.com" });
-    }
-    const usuarioExistente = await Usuario.findOne({ correo });
-    if (usuarioExistente) return res.status(400).json({ mensaje: "Usuario ya existe" });
-
-    const contrasenaEncriptada = await bcrypt.hash(contrasena, 10);
-    const id = await obtenerSiguienteSecuencia("usuarioId");
-    const usuario = new Usuario({
-      id_usuario: id,
-      nombreCompleto,
-      correo,
-      contrasena: contrasenaEncriptada,
-      rol: "admin",
-    });
-    await usuario.save();
-    res.status(201).json({ mensaje: "Admin creado con éxito", rol: "admin" });
+    res.status(201).json({ mensaje: "Usuario registrado", rol });
   } catch (err) {
     res.status(500).json({ mensaje: "Error: " + err.message });
   }
@@ -260,25 +195,16 @@ app.post("/api/admin/crear-admin", autenticarToken, autenticarSuperAdmin, async 
 app.post("/api/auth/iniciar-sesion", async (req, res) => {
   try {
     const { correo, contrasena } = req.body;
-    let user = await Usuario.findOne({ correo });
-    if (user && await bcrypt.compare(contrasena, user.contrasena)) {
-      const token = jwt.sign(
-        { id: user._id, rol: user.rol },
-        process.env.JWT_SECRET,
-        { expiresIn: "1h" }
-      );
-      return res.json({ token, rol: user.rol });
+    const cliente = await Cliente.findOne({ correo });
+    if (!cliente || !(await bcrypt.compare(contrasena, cliente.contrasena))) {
+      return res.status(400).json({ mensaje: "Credenciales inválidas" });
     }
-    user = await Cliente.findOne({ correo });
-    if (user && await bcrypt.compare(contrasena, user.contrasena)) {
-      const token = jwt.sign(
-        { id: user._id, rol: user.rol },
-        process.env.JWT_SECRET,
-        { expiresIn: "1h" }
-      );
-      return res.json({ token, rol: user.rol });
-    }
-    return res.status(400).json({ mensaje: "Credenciales inválidas" });
+    const token = jwt.sign(
+      { id: cliente._id, rol: cliente.rol },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+    res.json({ token, rol: cliente.rol });
   } catch (err) {
     res.status(500).json({ mensaje: "Error: " + err.message });
   }
@@ -294,7 +220,7 @@ app.get("/api/productos", autenticarToken, async (req, res) => {
   }
 });
 
-app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, res) => {
+app.post("/api/productos", autenticarToken, autenticarAdmin, async (req, res) => {
   try {
     const {
       name,
@@ -307,18 +233,13 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
       characteristics,
       productCode,
       inStock,
+      rating,
+      reviews,
+      featured,
     } = req.body;
 
-    // Limpiar strings para evitar mismatches (trim)
-    const cleanName = name?.trim();
-    const cleanCategory = category?.trim();
-    const cleanImage = image?.trim();
-    const cleanDescription = description?.trim();
-    const cleanCharacteristics = characteristics?.trim();
-    const cleanProductCode = productCode?.trim();
-
-    // Validaciones (solo campos del modal de agregar producto)
-    if (!cleanName || !cleanCategory || !price || !cleanImage || !cleanDescription || !cleanCharacteristics || !cleanProductCode) {
+    // Validaciones
+    if (!name || !category || !price || !image || !description || !characteristics || !productCode) {
       return res.status(400).json({ mensaje: "Todos los campos requeridos deben estar presentes" });
     }
     if (isNaN(price) || price <= 0 || price > 10000) {
@@ -332,31 +253,33 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
     }
     // Validar URL de imagen
     try {
-      new URL(cleanImage);
+      new URL(image);
     } catch {
       return res.status(400).json({ mensaje: "La URL de la imagen es inválida" });
     }
-    // Validar categoría existente (con trim para matching)
-    const categoriaExiste = await Categoria.findOne({ nombre: cleanCategory });
+    // Validar categoría existente
+    const categoriaExiste = await Categoria.findOne({ nombre: category });
     if (!categoriaExiste) {
-      return res.status(400).json({ mensaje: `La categoría "${cleanCategory}" no existe` });
+      return res.status(400).json({ mensaje: `La categoría "${category}" no existe` });
     }
 
     const id = await obtenerSiguienteSecuencia("productoId");
     const producto = new Producto({
       id_producto: id,
-      categoria: cleanCategory, // Almacena el nombre de la categoría limpia como string
-      nombre: cleanName,
+      categoria: category, // Almacena el nombre de la categoría como string
+      nombre: name,
       price,
       originalPrice,
       discount,
-      image: cleanImage,
-      description: cleanDescription,
-      characteristics: cleanCharacteristics,
-      productCode: cleanProductCode,
+      image,
+      description,
+      characteristics,
+      productCode,
       inStock: inStock !== undefined ? inStock : true,
-      // Campos no en modal (reviews, featured, createdAt): usar defaults del schema
-      // rating también usa default del schema si no se envía
+      rating: rating || 4.5,
+      reviews: reviews || 0,
+      featured: featured || false,
+      createdAt: new Date(),
     });
 
     await producto.save();
