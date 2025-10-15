@@ -638,6 +638,28 @@ app.delete("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (
   }
 });
 
+// En tu server.js, después de los modelos y antes de rutas protegidas, agrega estos endpoints PÚBLICOS:
+
+// GET público para productos (sin auth, para frontend)
+app.get("/api/productos", async (req, res) => {
+  try {
+    const productos = await Producto.find().select('-contrasena'); // Excluye sensibles si hay
+    res.json(productos);
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al obtener productos: " + err.message });
+  }
+});
+
+// GET público para categorías (sin auth)
+app.get("/api/categorias", async (req, res) => {
+  try {
+    const categorias = await Categoria.find();
+    res.json({ categorias });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al obtener categorías: " + err.message });
+  }
+});
+
 // Rutas de productos
 app.get("/api/productos", autenticarToken, async (req, res) => {
   try {
@@ -663,6 +685,7 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
       inStock,
     } = req.body;
 
+    
     // Limpiar strings para evitar mismatches (trim)
     const cleanName = name?.trim();
     const cleanCategory = category?.trim();
