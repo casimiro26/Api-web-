@@ -8,14 +8,8 @@ const socketIo = require("socket.io");
 const crypto = require("crypto");
 const cors = require("cors");
 
-// ¡CORRECCIÓN PRINCIPAL: Mover dotenv.config() AQUÍ, al principio!
-dotenv.config();
-console.log("DEBUG - STRIPE_SECRET_KEY:", process.env.STRIPE_SECRET_KEY ? "Cargada correctamente (empieza con sk_test_)" : "AÚN VACÍA - Revisa .env");
-
-// Ahora sí inicializar Stripe DESPUÉS de cargar el .env
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY); // Nueva: Integración con Stripe
-
 // Configuración inicial
+dotenv.config();
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -29,9 +23,6 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
 app.use(express.json());
-
-// Para webhooks de Stripe: Raw body para verificar signatures
-app.use("/api/pagos/webhook", express.raw({ type: "application/json" }));
 
 // Generar secreto JWT si no existe en .env
 const generateJWTSecret = () => {
@@ -84,7 +75,7 @@ const Categoria = mongoose.model("Categoria", categoriaSchema);
 
 const productoSchema = new mongoose.Schema({
   id_producto: { type: Number, unique: true },
-  categoria: { type: String, required: true },
+  categoria: { type: String, required: true }, // Almacena el nombre de la categoría como string
   nombre: { type: String, required: true },
   price: { type: Number, required: true },
   originalPrice: { type: Number },
@@ -100,28 +91,6 @@ const productoSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 const Producto = mongoose.model("Producto", productoSchema);
-
-// Nuevo modelo simple para registrar pagos (opcional, para logs)
-const pagoSchema = new mongoose.Schema({
-  id_pago: { type: Number, unique: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, refPath: 'userModel' },
-  userModel: { type: String, enum: ['Usuario', 'Cliente'] },
-  monto: { type: Number, required: true },
-  stripePaymentId: { type: String, required: true },
-  status: { type: String, enum: ['pending', 'succeeded', 'failed'], default: 'pending' },
-  createdAt: { type: Date, default: Date.now },
-});
-const Pago = mongoose.model("Pago", pagoSchema);
-
-// CORRECCIÓN: Agregado el esquema para CartItem (asumiendo que lo agregaste manualmente)
-const cartItemSchema = new mongoose.Schema({
-  id_carrito: { type: Number, unique: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, required: true },
-  productoId: { type: Number, required: true },
-  cantidad: { type: Number, default: 1, min: 1 },
-  createdAt: { type: Date, default: Date.now },
-});
-const CartItem = mongoose.model("CartItem", cartItemSchema);
 
 // Utilidad para IDs secuenciales
 async function obtenerSiguienteSecuencia(nombre) {
@@ -142,14 +111,6 @@ const autenticarToken = (req, res, next) => {
     req.user = user;
     next();
   });
-};
-
-// Middleware para verificar solo usuarios clientes (no admins para pagos)
-const verificarCliente = (req, res, next) => {
-  if (req.user.rol !== "user") {
-    return res.status(403).json({ mensaje: "Acceso denegado: solo para clientes" });
-  }
-  next();
 };
 
 // Middleware para verificar admin o superadmin
@@ -232,7 +193,7 @@ app.post("/api/setup/crear-superadmin", async (req, res) => {
   }
 });
 
-// Endpoints para categorías (protegidos por superadmin)
+// Endpoint para obtener todas las categorías (protegido por superadmin)
 app.get("/api/admin/categorias", autenticarToken, autenticarSuperAdmin, async (req, res) => {
   try {
     const categorias = await Categoria.find();
@@ -242,6 +203,7 @@ app.get("/api/admin/categorias", autenticarToken, autenticarSuperAdmin, async (r
   }
 });
 
+// Endpoint para crear categoría (protegido por superadmin)
 app.post("/api/admin/crear-categoria", autenticarToken, autenticarSuperAdmin, async (req, res) => {
   try {
     const { nombre, descripcion } = req.body;
@@ -264,6 +226,7 @@ app.post("/api/admin/crear-categoria", autenticarToken, autenticarSuperAdmin, as
   }
 });
 
+// Endpoint para actualizar categoría (protegido por superadmin)
 app.put("/api/admin/categorias/:id", autenticarToken, autenticarSuperAdmin, async (req, res) => {
   try {
     const id_categoria = parseInt(req.params.id);
@@ -305,6 +268,7 @@ app.put("/api/admin/categorias/:id", autenticarToken, autenticarSuperAdmin, asyn
   }
 });
 
+// Endpoint para eliminar categoría (protegido por superadmin)
 app.delete("/api/admin/categorias/:id", autenticarToken, autenticarSuperAdmin, async (req, res) => {
   try {
     const id_categoria = parseInt(req.params.id);
@@ -314,6 +278,7 @@ app.delete("/api/admin/categorias/:id", autenticarToken, autenticarSuperAdmin, a
       return res.status(404).json({ mensaje: "Categoría no encontrada" });
     }
 
+    // Opcional: Verificar si hay productos usando esta categoría antes de eliminar
     const productosUsandoCategoria = await Producto.countDocuments({ categoria: categoria.nombre });
     if (productosUsandoCategoria > 0) {
       return res.status(400).json({ mensaje: `No se puede eliminar la categoría "${categoria.nombre}" porque está en uso por ${productosUsandoCategoria} productos` });
@@ -326,7 +291,7 @@ app.delete("/api/admin/categorias/:id", autenticarToken, autenticarSuperAdmin, a
   }
 });
 
-// Rutas de autenticación para clientes
+// Rutas de autenticación para clientes (solo users normales)
 app.post("/api/auth/registrar-cliente", async (req, res) => {
   try {
     const { nombreCompleto, correo, contrasena } = req.body;
@@ -355,6 +320,7 @@ app.post("/api/auth/registrar-cliente", async (req, res) => {
   }
 });
 
+// Endpoint para crear admin (protegido por superadmin)
 app.post("/api/admin/crear-admin", autenticarToken, autenticarSuperAdmin, async (req, res) => {
   try {
     const { nombreCompleto, correo, contrasena } = req.body;
@@ -410,7 +376,7 @@ app.post("/api/auth/iniciar-sesion", async (req, res) => {
   }
 });
 
-// Endpoints para perfiles de usuario
+// Nuevos endpoints para perfiles de usuario (obtener y actualizar perfil propio)
 app.get("/api/perfil", autenticarToken, async (req, res) => {
   try {
     const { id: mongoId, rol } = req.user;
@@ -418,6 +384,7 @@ app.get("/api/perfil", autenticarToken, async (req, res) => {
     if (!usuario) {
       return res.status(404).json({ mensaje: "Perfil no encontrado" });
     }
+    // No incluir contraseña en la respuesta
     const { contrasena, ...perfilSinContrasena } = usuario.toObject();
     res.json({ perfil: perfilSinContrasena });
   } catch (err) {
@@ -430,6 +397,7 @@ app.put("/api/perfil", autenticarToken, async (req, res) => {
     const { id: mongoId, rol } = req.user;
     const { nombreCompleto, correo, contrasena: nuevaContrasena } = req.body;
 
+    // Validaciones
     if (!nombreCompleto && !correo && !nuevaContrasena) {
       return res.status(400).json({ mensaje: "Al menos un campo debe ser proporcionado para actualizar" });
     }
@@ -444,6 +412,7 @@ app.put("/api/perfil", autenticarToken, async (req, res) => {
       actualizaciones.nombreCompleto = nombreCompleto.trim();
     }
     if (correo && correo.trim() !== usuarioExistente.correo) {
+      // Verificar unicidad del nuevo correo
       const correoExistente = rol === "user" 
         ? await Cliente.findOne({ correo: correo.trim() }) 
         : await Usuario.findOne({ correo: correo.trim() });
@@ -472,10 +441,11 @@ app.put("/api/perfil", autenticarToken, async (req, res) => {
   }
 });
 
-// Endpoints para superadmin: gestionar admins
+// Nuevos endpoints para superadmin: gestionar cuentas administrativas (obtener lista, editar, eliminar)
 app.get("/api/superadmin/admins", autenticarToken, autenticarSuperAdmin, async (req, res) => {
   try {
-    const admins = await Usuario.find({ rol: "admin" }).select("-contrasena");
+    // Obtener todos los admins (excluyendo superadmin si se desea, pero por ahora todos los Usuario)
+    const admins = await Usuario.find({ rol: "admin" }).select("-contrasena"); // Excluir contraseña
     res.json({ admins });
   } catch (err) {
     res.status(500).json({ mensaje: "Error al obtener lista de admins: " + err.message });
@@ -509,6 +479,7 @@ app.put("/api/superadmin/admins/:id_usuario", autenticarToken, autenticarSuperAd
       return res.status(404).json({ mensaje: "Admin no encontrado" });
     }
 
+    // No permitir editar superadmin (aunque la consulta es solo para admins)
     const superadminId = (await Usuario.findOne({ rol: "superadmin" })).id_usuario;
     if (id_usuario === superadminId) {
       return res.status(403).json({ mensaje: "No se puede editar el superadmin" });
@@ -557,6 +528,7 @@ app.delete("/api/superadmin/admins/:id_usuario", autenticarToken, autenticarSupe
       return res.status(404).json({ mensaje: "Admin no encontrado" });
     }
 
+    // No permitir eliminar superadmin
     const superadminId = (await Usuario.findOne({ rol: "superadmin" })).id_usuario;
     if (id_usuario === superadminId) {
       return res.status(403).json({ mensaje: "No se puede eliminar el superadmin" });
@@ -569,113 +541,9 @@ app.delete("/api/superadmin/admins/:id_usuario", autenticarToken, autenticarSupe
   }
 });
 
-// NUEVOS ENDPOINTS PARA PAGOS (Stripe)
-app.post("/api/pagos/crear-intent", autenticarToken, verificarCliente, async (req, res) => {
-  try {
-    const { monto } = req.body; // Monto en centavos (ej. 2000 para $20.00)
-    if (!monto || isNaN(monto) || monto <= 0) {
-      return res.status(400).json({ mensaje: "Monto inválido" });
-    }
+// Agregar después de tu endpoint POST /api/productos
 
-    // Crear Payment Intent en Stripe
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: monto,
-      currency: "usd", // Cambia a "mxn" si usas pesos, etc.
-      metadata: { userId: req.user.id }, // Asociar al usuario
-    });
-
-    // Registrar pago pendiente en DB
-    const id_pago = await obtenerSiguienteSecuencia("pagoId");
-    const pago = new Pago({
-      id_pago,
-      userId: req.user.id,
-      userModel: req.user.rol === "user" ? "Cliente" : "Usuario",
-      monto: monto / 100, // Guardar en dólares
-      stripePaymentId: paymentIntent.id,
-      status: "pending",
-    });
-    await pago.save();
-
-    res.json({
-      client_secret: paymentIntent.client_secret,
-      paymentId: paymentIntent.id,
-      mensaje: "Payment Intent creado. Usa el client_secret en el frontend.",
-    });
-  } catch (err) {
-    res.status(500).json({ mensaje: "Error al crear intent de pago: " + err.message });
-  }
-});
-
-app.post("/api/pagos/confirmar", autenticarToken, verificarCliente, async (req, res) => {
-  try {
-    const { payment_intent_id } = req.body;
-    if (!payment_intent_id) {
-      return res.status(400).json({ mensaje: "ID de pago requerido" });
-    }
-
-    // Confirmar pago en Stripe (el frontend envía el resultado del Elements)
-    const paymentIntent = await stripe.paymentIntents.confirm(payment_intent_id);
-
-    if (paymentIntent.status === 'succeeded') {
-      // Actualizar en DB
-      await Pago.findOneAndUpdate(
-        { stripePaymentId: payment_intent_id },
-        { status: "succeeded" }
-      );
-
-      // Aquí puedes agregar lógica post-pago: reducir stock, enviar email, etc.
-      // Ej: io.emit("pagoExitoso", { userId: req.user.id, monto: paymentIntent.amount / 100 });
-
-      res.json({ mensaje: "Pago confirmado exitosamente", pago: paymentIntent });
-    } else {
-      res.status(400).json({ mensaje: "Pago no exitoso" });
-    }
-  } catch (err) {
-    res.status(500).json({ mensaje: "Error al confirmar pago: " + err.message });
-  }
-});
-
-// Webhook para Stripe (configura en dashboard de Stripe: https://dashboard.stripe.com/webhooks)
-app.post("/api/pagos/webhook", async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-
-  try {
-    // Verificar signature del webhook
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET || "whsec_tu_webhook_secret"); // Agrega STRIPE_WEBHOOK_SECRET a .env si lo necesitas
-  } catch (err) {
-    console.log(`Webhook signature verification failed: ${err.message}`);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  // Manejar eventos de Stripe
-  switch (event.type) {
-    case 'payment_intent.succeeded':
-      const paymentIntent = event.data.object;
-      // Actualizar DB
-      await Pago.findOneAndUpdate(
-        { stripePaymentId: paymentIntent.id },
-        { status: "succeeded" }
-      );
-      // Lógica adicional: fulfillment (ej. actualizar stock de producto)
-      console.log("Pago exitoso via webhook:", paymentIntent.id);
-      break;
-    case 'payment_intent.payment_failed':
-      const failedIntent = event.data.object;
-      await Pago.findOneAndUpdate(
-        { stripePaymentId: failedIntent.id },
-        { status: "failed" }
-      );
-      console.log("Pago fallido via webhook:", failedIntent.id);
-      break;
-    default:
-      console.log(`Unhandled event type: ${event.type}`);
-  }
-
-  res.json({ received: true });
-});
-
-// Endpoints para productos
+// Actualizar producto
 app.put("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req, res) => {
   try {
     const productId = parseInt(req.params.id);
@@ -692,6 +560,7 @@ app.put("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req
       inStock,
     } = req.body;
 
+    // Limpiar strings
     const cleanName = name?.trim();
     const cleanCategory = category?.trim();
     const cleanImage = image?.trim();
@@ -699,6 +568,7 @@ app.put("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req
     const cleanCharacteristics = characteristics?.trim();
     const cleanProductCode = productCode?.trim();
 
+    // Validaciones
     if (!cleanName || !cleanCategory || !price || !cleanImage || !cleanDescription || !cleanCharacteristics || !cleanProductCode) {
       return res.status(400).json({ mensaje: "Todos los campos requeridos deben estar presentes" });
     }
@@ -711,22 +581,26 @@ app.put("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req
       return res.status(400).json({ mensaje: "El descuento debe ser un número entre 0 y 100" });
     }
 
+    // Validar URL de imagen
     try {
       new URL(cleanImage);
     } catch {
       return res.status(400).json({ mensaje: "La URL de la imagen es inválida" });
     }
 
+    // Validar categoría existente
     const categoriaExiste = await Categoria.findOne({ nombre: cleanCategory });
     if (!categoriaExiste) {
       return res.status(400).json({ mensaje: `La categoría "${cleanCategory}" no existe` });
     }
 
+    // Buscar y actualizar producto
     const producto = await Producto.findOne({ id_producto: productId });
     if (!producto) {
       return res.status(404).json({ mensaje: "Producto no encontrado" });
     }
 
+    // Actualizar campos
     producto.nombre = cleanName;
     producto.categoria = cleanCategory;
     producto.price = price;
@@ -746,6 +620,7 @@ app.put("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req
   }
 });
 
+// Eliminar producto
 app.delete("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (req, res) => {
   try {
     const productId = parseInt(req.params.id);
@@ -763,6 +638,29 @@ app.delete("/api/productos/:id", autenticarToken, verificarAdminOrSuper, async (
   }
 });
 
+// En tu server.js, después de los modelos y antes de rutas protegidas, agrega estos endpoints PÚBLICOS:
+
+// GET público para productos (sin auth, para frontend)
+app.get("/api/productos", async (req, res) => {
+  try {
+    const productos = await Producto.find().select('-contrasena'); // Excluye sensibles si hay
+    res.json(productos);
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al obtener productos: " + err.message });
+  }
+});
+
+// GET público para categorías (sin auth)
+app.get("/api/categorias", async (req, res) => {
+  try {
+    const categorias = await Categoria.find();
+    res.json({ categorias });
+  } catch (err) {
+    res.status(500).json({ mensaje: "Error al obtener categorías: " + err.message });
+  }
+});
+
+// Rutas de productos
 app.get("/api/productos", autenticarToken, async (req, res) => {
   try {
     const productos = await Producto.find();
@@ -787,6 +685,8 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
       inStock,
     } = req.body;
 
+    
+    // Limpiar strings para evitar mismatches (trim)
     const cleanName = name?.trim();
     const cleanCategory = category?.trim();
     const cleanImage = image?.trim();
@@ -794,6 +694,7 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
     const cleanCharacteristics = characteristics?.trim();
     const cleanProductCode = productCode?.trim();
 
+    // Validaciones (solo campos del modal de agregar producto)
     if (!cleanName || !cleanCategory || !price || !cleanImage || !cleanDescription || !cleanCharacteristics || !cleanProductCode) {
       return res.status(400).json({ mensaje: "Todos los campos requeridos deben estar presentes" });
     }
@@ -806,11 +707,13 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
     if (originalPrice && (isNaN(originalPrice) || originalPrice <= 0)) {
       return res.status(400).json({ mensaje: "El precio original debe ser un número positivo" });
     }
+    // Validar URL de imagen
     try {
       new URL(cleanImage);
     } catch {
       return res.status(400).json({ mensaje: "La URL de la imagen es inválida" });
     }
+    // Validar categoría existente (con trim para matching)
     const categoriaExiste = await Categoria.findOne({ nombre: cleanCategory });
     if (!categoriaExiste) {
       return res.status(400).json({ mensaje: `La categoría "${cleanCategory}" no existe` });
@@ -819,7 +722,7 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
     const id = await obtenerSiguienteSecuencia("productoId");
     const producto = new Producto({
       id_producto: id,
-      categoria: cleanCategory,
+      categoria: cleanCategory, // Almacena el nombre de la categoría limpia como string
       nombre: cleanName,
       price,
       originalPrice,
@@ -829,10 +732,12 @@ app.post("/api/productos", autenticarToken, verificarAdminOrSuper, async (req, r
       characteristics: cleanCharacteristics,
       productCode: cleanProductCode,
       inStock: inStock !== undefined ? inStock : true,
+      // Campos no en modal (reviews, featured, createdAt): usar defaults del schema
+      // rating también usa default del schema si no se envía
     });
 
     await producto.save();
-    io.emit("nuevoProducto", producto);
+    io.emit("nuevoProducto", producto); // Notificar a los clientes conectados
     res.status(201).json({ mensaje: "Producto creado con éxito", producto });
   } catch (err) {
     res.status(500).json({ mensaje: "Error al crear producto: " + err.message });
